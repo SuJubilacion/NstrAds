@@ -1,0 +1,368 @@
+Nostr Ad Marketplace MVP (Next.js)
+This project is a Next.js prototype for an ad marketplace that uses the Nostr protocol for authentication. It includes three login methods (manual key input, NIP-07 extension, and random key generation) and manages user sessions in browser storage. The code is organized for clarity and future expansion (e.g. Breez Lightning integration). Below is a breakdown of the implementation and the complete code scaffold.
+Project Structure
+/pages: Next.js pages
+login.js: Login page with three authentication options.
+index.js: Home feed (placeholder) showing the logged-in user.
+/lib: Helper modules
+nostr.js: Functions to generate and verify Nostr key pairs.
+lightning.js: Placeholder for future Breez Lightning SDK integration.
+/utils: Utility modules
+auth.js: Session management (store/clear public key).
+public: (empty for now; static assets could go here)
+package.json, next.config.js, README.md: Config and documentation.
+Dependencies include next, react, react-dom, nostr-tools, and uuid (for future use).
+Authentication Flow
+Manual Login: User enters their npub (public key) and nsec (private key) in Bech32 format. The app verifies the key pair using nostr-tools. If valid, the npub is saved to session storage.
+NIP-07 Extension: If the browser has a Nostr extension (e.g. Alby, nos2x), the app calls window.nostr.getPublicKey(). The returned hex public key is converted to npub and stored.
+Random Keypair: The app generates a new random key pair using nostr-tools. It displays (alerts) the npub/nsec to the user and logs them in by storing the npub.
+After login, the user is redirected to the home page. The home page displays the current npub and includes a Logout button that clears the session. Session data is managed via sessionStorage (browser storage), so no backend authentication server is needed for this MVP.
+Code Files
+1. /lib/nostr.js
+Helper functions using nostr-tools to manage keys:
+javascript
+Copy
+Edit
+// /lib/nostr.js
+import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
+import * as nip19 from 'nostr-tools/nip19';
+
+/**
+ * Generates a new Nostr key pair.
+ * @returns {Object} An object with `npub` and `nsec` (Bech32-encoded keys).
+ */
+export function generateKeyPair() {
+  // generateSecretKey() returns a Uint8Array secret key
+  const sk = generateSecretKey();
+  // Encode the secret key to nsec (Bech32 format)
+  const nsec = nip19.nsecEncode(sk);
+  // Derive hex-encoded public key from the secret key
+  const pkHex = getPublicKey(sk);
+  // Encode the public key to npub (Bech32 format)
+  const npub = nip19.npubEncode(pkHex);
+  return { npub, nsec };
+}
+
+/**
+ * Validates a Nostr key pair (npub and nsec).
+ * @param {string} npub - Bech32-encoded public key.
+ * @param {string} nsec - Bech32-encoded private key.
+ * @returns {boolean} True if the keys match; false otherwise.
+ */
+export function verifyKeyPair(npub, nsec) {
+  try {
+    // Decode private key
+    const { type: secType, data: secData } = nip19.decode(nsec);
+    if (secType !== 'nsec') return false;
+    // secData is a Uint8Array (the raw private key)
+    // Derive public key hex from the private key bytes
+    const derivedPubHex = getPublicKey(secData);
+    // Decode public key
+    const { type: pubType, data: pubData } = nip19.decode(npub);
+    if (pubType !== 'npub') return false;
+    const pubHex = pubData; // hex string
+    // Check if derived public key matches the given public key
+    return derivedPubHex === pubHex;
+  } catch (err) {
+    return false;
+  }
+}
+generateKeyPair(): Creates a new random Nostr keypair (using generateSecretKey() and getPublicKey()) and encodes them into npub/nsec using NIP-19 Bech32 format.
+verifyKeyPair(): Decodes the provided nsec and npub, derives the public key from the secret, and checks if they match.
+2. /utils/auth.js
+Session management utilities for storing and retrieving the current user’s public key:
+javascript
+Copy
+Edit
+// /utils/auth.js
+
+/**
+ * Saves the user's public key (npub) in sessionStorage.
+ * @param {string} npub - The Bech32 public key.
+ */
+export function saveNpub(npub) {
+  if (typeof window !== 'undefined') {
+    sessionStorage.setItem('npub', npub);
+  }
+}
+
+/**
+ * Retrieves the saved public key from sessionStorage.
+ * @returns {string|null} The stored npub or null if not set.
+ */
+export function getNpub() {
+  if (typeof window !== 'undefined') {
+    return sessionStorage.getItem('npub');
+  }
+  return null;
+}
+
+/**
+ * Clears the stored public key from sessionStorage.
+ */
+export function clearNpub() {
+  if (typeof window !== 'undefined') {
+    sessionStorage.removeItem('npub');
+  }
+}
+saveNpub(npub): Stores the logged-in user's npub.
+getNpub(): Retrieves the current npub (returns null if not logged in).
+clearNpub(): Logs out by removing the npub from storage.
+3. /pages/login.js
+The login page with all three authentication options. It includes:
+Manual login form (input for npub and nsec).
+NIP-07 extension button (if a Nostr browser extension is available).
+Random key generation button.
+jsx
+Copy
+Edit
+// /pages/login.js
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/router';
+import { generateKeyPair, verifyKeyPair } from '../lib/nostr';
+import { saveNpub } from '../utils/auth';
+import * as nip19 from 'nostr-tools/nip19';
+
+export default function LoginPage() {
+  const router = useRouter();
+  const [npubInput, setNpubInput] = useState('');
+  const [nsecInput, setNsecInput] = useState('');
+  const [error, setError] = useState('');
+  const [extensionAvailable, setExtensionAvailable] = useState(false);
+
+  // Check for NIP-07 extension on client side
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.nostr) {
+      setExtensionAvailable(true);
+    }
+  }, []);
+
+  // Handle manual login (npub/nsec)
+  const handleManualLogin = (e) => {
+    e.preventDefault();
+    setError('');
+    // Validate that keys match
+    if (verifyKeyPair(npubInput.trim(), nsecInput.trim())) {
+      saveNpub(npubInput.trim());
+      router.push('/');
+    } else {
+      setError('Invalid key pair. Please check your npub and nsec.');
+    }
+  };
+
+  // Handle NIP-07 extension login
+  const handleExtensionLogin = async () => {
+    try {
+      // Request public key from the browser extension
+      const pubkeyHex = await window.nostr.getPublicKey();
+      // Encode hex public key into Bech32 npub
+      const npub = nip19.npubEncode(pubkeyHex);
+      saveNpub(npub);
+      router.push('/');
+    } catch (err) {
+      setError('Failed to get public key from extension.');
+    }
+  };
+
+  // Handle generation of a random key pair
+  const handleGenerate = () => {
+    const { npub, nsec } = generateKeyPair();
+    // Alert the user with the new keys (they should save them)
+    alert(`Generated new key pair:\n\nnpub: ${npub}\nnsec: ${nsec}\n\n(This key pair will be used for this session.)`);
+    saveNpub(npub);
+    router.push('/');
+  };
+
+  return (
+    <div style={{ maxWidth: '400px', margin: '2rem auto', fontFamily: 'Arial, sans-serif' }}>
+      <h1>Login</h1>
+
+      {/* Manual NPUB/NSEC Login Form */}
+      <form onSubmit={handleManualLogin} style={{ marginBottom: '1.5rem' }}>
+        <h2>Manual Login</h2>
+        <div style={{ marginBottom: '0.5rem' }}>
+          <label>Public Key (npub):</label><br />
+          <input
+            type="text"
+            value={npubInput}
+            onChange={(e) => setNpubInput(e.target.value)}
+            style={{ width: '100%' }}
+            placeholder="npub..."
+            required
+          />
+        </div>
+        <div style={{ marginBottom: '0.5rem' }}>
+          <label>Private Key (nsec):</label><br />
+          <input
+            type="text"
+            value={nsecInput}
+            onChange={(e) => setNsecInput(e.target.value)}
+            style={{ width: '100%' }}
+            placeholder="nsec..."
+            required
+          />
+        </div>
+        <button type="submit">Login with Keys</button>
+      </form>
+
+      {/* NIP-07 Extension Login */}
+      <div style={{ marginBottom: '1rem' }}>
+        <h2>Login with Nostr Extension</h2>
+        <button
+          onClick={handleExtensionLogin}
+          disabled={!extensionAvailable}
+        >
+          {extensionAvailable ? 'Use Nostr Browser Extension' : 'Extension Not Detected'}
+        </button>
+      </div>
+
+      {/* Random Key Generation */}
+      <div style={{ marginBottom: '1rem' }}>
+        <h2>Generate Random Key</h2>
+        <button onClick={handleGenerate}>
+          Generate &amp; Login
+        </button>
+      </div>
+
+      {/* Error Message */}
+      {error && <p style={{ color: 'red' }}>{error}</p>}
+    </div>
+  );
+}
+Key Points:
+Manual Login Form: The user inputs npub and nsec. On submit, verifyKeyPair() checks if they correspond. If valid, the npub is saved and the user is redirected.
+Extension Login: Checks window.nostr. If available, requests the public key via window.nostr.getPublicKey(), converts it to npub, and logs in.
+Random Key: Calls generateKeyPair(), alerts the user with the new keys, then logs in with the generated npub.
+Errors (e.g. invalid keys or missing extension) are displayed to the user.
+4. /pages/index.js
+The home feed (placeholder) that shows the logged-in user and a logout button:
+jsx
+Copy
+Edit
+// /pages/index.js
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
+import { getNpub, clearNpub } from '../utils/auth';
+
+export default function HomePage() {
+  const [npub, setNpub] = useState(null);
+  const router = useRouter();
+
+  useEffect(() => {
+    // On mount, check if user is logged in
+    const currentNpub = getNpub();
+    if (!currentNpub) {
+      // Not logged in, redirect to /login
+      router.replace('/login');
+    } else {
+      setNpub(currentNpub);
+    }
+  }, [router]);
+
+  const handleLogout = () => {
+    clearNpub();
+    router.push('/login');
+  };
+
+  return (
+    <div style={{ maxWidth: '600px', margin: '2rem auto', fontFamily: 'Arial, sans-serif' }}>
+      <h1>Home Feed</h1>
+      {npub && (
+        <>
+          <p><strong>Logged in as:</strong> {npub}</p>
+          {/* Placeholder for future ad feed content */}
+          <p>(Ad feed will appear here.)</p>
+        </>
+      )}
+      <button onClick={handleLogout}>Logout</button>
+    </div>
+  );
+}
+On mount, the code retrieves the stored npub. If none is found, it redirects to /login.
+Displays the current npub and a Logout button that clears the session and returns to the login page.
+5. /lib/lightning.js
+A placeholder for future Breez Lightning SDK integration. Currently empty, but structured for later expansion:
+javascript
+Copy
+Edit
+// /lib/lightning.js
+
+/**
+ * Placeholder for Breez Lightning SDK integration.
+ * Future functions for initializing Lightning will be added here.
+ */
+
+// Example stub function
+export function initLightning() {
+  // TODO: Set up Breez SDK with API keys once available.
+}
+6. next.config.js
+Basic Next.js configuration. We enable React strict mode:
+javascript
+Copy
+Edit
+// next.config.js
+module.exports = {
+  reactStrictMode: true
+};
+7. package.json
+Dependencies and scripts. This includes nostr-tools for Nostr cryptography and uuid (if needed for future use):
+json
+Copy
+Edit
+{
+  "name": "nostr-ad-marketplace",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "nostr-tools": "latest",
+    "uuid": "latest"
+  }
+}
+8. README.md
+Documentation and instructions. It explains the project purpose, setup, and notes about Breez Lightning:
+markdown
+Copy
+Edit
+# Nostr Ad Marketplace MVP
+
+A Next.js prototype for an ad marketplace with **Nostr-based authentication**. This MVP supports three login options (manual keys, NIP-07 extension, random keys) and uses browser `sessionStorage` to manage the logged-in user's public key. It also includes a placeholder for future Breez Lightning integration.
+
+## Features
+
+- **Nostr Authentication**: Users log in with Nostr key pairs (`npub`/`nsec`).
+- **Three Login Methods**:
+  1. **Manual Input**: Enter your `npub` and `nsec`.
+  2. **NIP-07 Extension**: Use a compatible browser extension (e.g. Alby, nos2x) to log in.
+  3. **Random Key**: Generate a temporary key pair with one click.
+- **Session Storage**: The user's `npub` is stored in browser session storage (no backend server).
+- **Home Feed Placeholder**: After login, a simple home page shows the logged-in `npub`.
+- **Lightning Placeholder**: `lib/lightning.js` is reserved for future Breez Lightning SDK support (Breez API keys needed).
+
+## Setup
+
+1. **Install dependencies**:
+   ```bash
+   npm install
+Run development server:
+bash
+Copy
+Edit
+npm run dev
+Open in browser (the app should be visible on http://localhost:3000).
+Currently, the ad feed and Lightning payments are not implemented. These features will be added later once Breez API keys are available.
+pgsql
+Copy
+Edit
+
+## Conclusion
+
+This Next.js MVP provides a working foundation for an ad marketplace with Nostr-based login. The code is modular and thoroughly commented, especially around the Nostr login handling. You can run this project immediately (e.g., on Replit or any Node environment) with `npm install` and `npm run dev`. As noted, Lightning/Breez functionality is planned for a future update once API keys can be integrated.
