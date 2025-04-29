@@ -1,4 +1,6 @@
 import { users, type User, type InsertUser, ads, type Ad, type InsertAd } from "@shared/schema";
+import { db } from "./db";
+import { eq } from "drizzle-orm";
 
 export interface IStorage {
   // User methods
@@ -18,103 +20,88 @@ export interface IStorage {
   getAllAds(): Promise<Ad[]>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<number, User>;
-  private ads: Map<number, Ad>;
-  private userIdCounter: number;
-  private adIdCounter: number;
-
-  constructor() {
-    this.users = new Map();
-    this.ads = new Map();
-    this.userIdCounter = 1;
-    this.adIdCounter = 1;
-  }
-
+export class DatabaseStorage implements IStorage {
   // User methods
   async getUser(id: number): Promise<User | undefined> {
-    return this.users.get(id);
+    const result = await db.select().from(users).where(eq(users.id, id));
+    return result[0];
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+    const result = await db.select().from(users).where(eq(users.username, username));
+    return result[0];
   }
 
   async getUserByNpub(npub: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.npub === npub,
-    );
+    const result = await db.select().from(users).where(eq(users.npub, npub));
+    return result[0];
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const id = this.userIdCounter++;
-    const now = new Date();
-    const user: User = { ...insertUser, id, createdAt: now };
-    this.users.set(id, user);
-    return user;
+    const result = await db.insert(users).values(insertUser).returning();
+    return result[0];
   }
 
   // Ad methods
   async getAd(id: number): Promise<Ad | undefined> {
-    return this.ads.get(id);
+    const result = await db.select().from(ads).where(eq(ads.id, id));
+    return result[0];
   }
 
   async getAdsByUserId(userId: number): Promise<Ad[]> {
-    return Array.from(this.ads.values()).filter(
-      (ad) => ad.userId === userId,
-    );
+    return await db.select().from(ads).where(eq(ads.userId, userId));
   }
 
   async createAd(insertAd: InsertAd): Promise<Ad> {
-    const id = this.adIdCounter++;
-    const now = new Date();
-    const ad: Ad = { 
-      ...insertAd, 
-      id, 
-      impressions: 0, 
-      clicks: 0, 
-      createdAt: now 
-    };
-    this.ads.set(id, ad);
-    return ad;
+    const result = await db.insert(ads).values(insertAd).returning();
+    return result[0];
   }
 
   async updateAd(id: number, updatedFields: Partial<InsertAd>): Promise<Ad | undefined> {
-    const ad = this.ads.get(id);
-    if (!ad) return undefined;
-    
-    const updatedAd: Ad = { ...ad, ...updatedFields };
-    this.ads.set(id, updatedAd);
-    return updatedAd;
+    const result = await db
+      .update(ads)
+      .set(updatedFields)
+      .where(eq(ads.id, id))
+      .returning();
+    return result[0];
   }
 
   async deleteAd(id: number): Promise<boolean> {
-    return this.ads.delete(id);
+    const result = await db.delete(ads).where(eq(ads.id, id)).returning();
+    return result.length > 0;
   }
 
   async incrementAdClicks(id: number): Promise<Ad | undefined> {
-    const ad = this.ads.get(id);
-    if (!ad) return undefined;
+    // First get the current ad to get the current click count
+    const currentAd = await this.getAd(id);
+    if (!currentAd) return undefined;
     
-    const updatedAd: Ad = { ...ad, clicks: ad.clicks + 1 };
-    this.ads.set(id, updatedAd);
-    return updatedAd;
+    // Increment the clicks
+    const result = await db
+      .update(ads)
+      .set({ clicks: currentAd.clicks + 1 })
+      .where(eq(ads.id, id))
+      .returning();
+    return result[0];
   }
 
   async incrementAdImpressions(id: number): Promise<Ad | undefined> {
-    const ad = this.ads.get(id);
-    if (!ad) return undefined;
+    // First get the current ad to get the current impressions count
+    const currentAd = await this.getAd(id);
+    if (!currentAd) return undefined;
     
-    const updatedAd: Ad = { ...ad, impressions: ad.impressions + 1 };
-    this.ads.set(id, updatedAd);
-    return updatedAd;
+    // Increment the impressions
+    const result = await db
+      .update(ads)
+      .set({ impressions: currentAd.impressions + 1 })
+      .where(eq(ads.id, id))
+      .returning();
+    return result[0];
   }
 
   async getAllAds(): Promise<Ad[]> {
-    return Array.from(this.ads.values());
+    return await db.select().from(ads);
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
