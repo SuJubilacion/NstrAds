@@ -68,6 +68,15 @@ export function CreateAdModal({ isOpen, onClose }: CreateAdModalProps) {
       return;
     }
     
+    if (!imageUrl) {
+      toast({
+        variant: "destructive",
+        title: "Missing image URL",
+        description: "Please enter an image URL for your ad",
+      });
+      return;
+    }
+    
     try {
       setIsSubmitting(true);
       
@@ -76,7 +85,7 @@ export function CreateAdModal({ isOpen, onClose }: CreateAdModalProps) {
         userId: user?.id || 1, // Fallback if no ID yet
         title,
         description,
-        imageUrl,
+        imagePath: imageUrl, // Map imageUrl to imagePath as required by the schema
         targetUrl,
         budget: parseInt(budget),
         duration: parseInt(duration),
